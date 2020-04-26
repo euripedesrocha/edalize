@@ -11,10 +11,17 @@ $(error Environment variable MODEL_TECH was not found. It should be set to <mode
 endif
 
 CC ?= gcc
-CFLAGS := -c -std=c99 -fPIC -fno-stack-protector -g -m32
+CFLAGS := -c -std=c99 -fPIC -fno-stack-protector -g
 
 LD ?= ld
-LDFLAGS := -shared -E -melf_i386
+LDFLAGS := -shared -E
+
+#Try to determine if ModelSim is 32- or 64-bit.
+#To manually override, set the environment MTI_VCO_MODE to 32 or 64
+ifeq ($(findstring 64, $(shell $(MODEL_TECH)/../vco)),)
+CFLAGS  += -m32
+LDFLAGS += -melf_i386
+endif
 
 RM ?= rm
 INCS := -I$(MODEL_TECH)/../include
@@ -31,10 +38,10 @@ EXTRA_OPTIONS ?= $(VSIM_OPTIONS) $(addprefix -g,$(PARAMETERS)) $(addprefix +,$(P
 all: work $(VPI_MODULES)
 
 run: work $(VPI_MODULES)
-	$(VSIM) -do "run -all" -c $(addprefix -pli ,$(VPI_MODULES)) $(TOPLEVEL) $(EXTRA_OPTIONS)
+	$(VSIM) -do "run -all; quit -code [expr [coverage attribute -name TESTSTATUS -concise] >= 2 ? [coverage attribute -name TESTSTATUS -concise] : 0]; exit" -c $(addprefix -pli ,$(VPI_MODULES)) $(EXTRA_OPTIONS) $(TOPLEVEL)
 
 run-gui: work $(VPI_MODULES)
-	$(VSIM) -gui $(addprefix -pli ,$(VPI_MODULES)) $(TOPLEVEL) $(EXTRA_OPTIONS)
+	$(VSIM) -gui $(addprefix -pli ,$(VPI_MODULES)) $(EXTRA_OPTIONS) $(TOPLEVEL)
 
 work:
 	$(VSIM) -c -do "do edalize_main.tcl; exit"
@@ -59,10 +66,23 @@ clean_{name}:
 
 class Modelsim(Edatool):
 
-    tool_options = {'lists' : {'vlog_options' : 'String',
-                               'vsim_options' : 'String'}}
+    argtypes = ['plusarg', 'vlogdefine', 'vlogparam', 'generic']
 
-    argtypes = ['plusarg', 'vlogdefine', 'vlogparam']
+    @classmethod
+    def get_doc(cls, api_ver):
+        if api_ver == 0:
+            return {'description' : "ModelSim simulator from Mentor Graphics",
+                    'lists' : [
+                        {'name' : 'vcom_options',
+                         'type' : 'String',
+                         'desc' : 'Additional options for compilation with vcom'},
+                        {'name' : 'vlog_options',
+                         'type' : 'String',
+                         'desc' : 'Additional options for compilation with vlog'},
+                        {'name' : 'vsim_options',
+                         'type' : 'String',
+                         'desc' : 'Additional run options for vsim'},
+                        ]}
 
     def _write_build_rtl_tcl_file(self, tcl_main):
         tcl_build_rtl  = open(os.path.join(self.work_root, "edalize_build_rtl.tcl"), 'w')
@@ -100,6 +120,9 @@ class Modelsim(Edatool):
                     args = ['-2008']
                 else:
                     args = []
+
+                args += self.tool_options.get('vcom_options', [])
+
             elif f.file_type == 'tclSource':
                 cmd = None
                 tcl_main.write("do {}\n".format(f.name))
@@ -120,6 +143,8 @@ class Modelsim(Edatool):
         _parameters = []
         for key, value in self.vlogparam.items():
             _parameters += ['{}={}'.format(key, self._param_value_str(value))]
+        for key, value in self.generic.items():
+            _parameters += ['{}={}'.format(key, self._param_value_str(value, bool_is_str=True))]
         _plusargs = []
         for key, value in self.plusarg.items():
             _plusargs += ['{}={}'.format(key, self._param_value_str(value))]

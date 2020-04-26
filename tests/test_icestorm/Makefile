@@ -5,19 +5,28 @@ PCF_FILE := pcf_file.pcf
 PNR      ?= arachne
 ARACHNE_PNR_OPTIONS := a few arachne_pnr_options
 NEXTPNR_OPTIONS     := 
+DEVICE   := None
 
 all: $(TARGET).bin
+timing: $(TARGET).tim
+stats: $(TARGET).stat
 
-%.blif: %.ys
-	yosys -l yosys.log -q -s $?
+.PRECIOUS: %_next.asc %_arachne.asc
+
+%.blif: %.mk
+	$(MAKE) -f $<
 %_arachne.asc: $(PCF_FILE) %.blif
 	arachne-pnr $(ARACHNE_PNR_OPTIONS) -q -p $? -o $@
-%.json: %.ys
-	yosys -l yosys.log -q -s $?
+%.json: %.mk
+	$(MAKE) -f $<
 %_next.asc: %.json
 	nextpnr-ice40 -l next.log -q $(NEXTPNR_OPTIONS) --pcf $(PCF_FILE) --json $? --asc $@
 %.bin: %_$(PNR).asc
 	icepack $< $@
+%.tim: %_$(PNR).asc
+	icetime -tmd $(DEVICE) $< > $@
+%.stat: %_$(PNR).asc
+	icebox_stat $< > $@
 
 build-gui: $(TARGET).json
 	nextpnr-ice40 -q $(NEXTPNR_OPTIONS) --pcf $(PCF_FILE) --json $? --asc $@ --gui

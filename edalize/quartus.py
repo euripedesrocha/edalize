@@ -10,51 +10,110 @@ from edalize.edatool import Edatool
 
 logger = logging.getLogger(__name__)
 
-""" Quartus Backend
-
-The Quartus backend supports Intel Quartus Std and Pro editions to build
-systems and program the FPGA.
-
-"""
 class Quartus(Edatool):
 
-    tool_options = {'members' : {'family' : 'String',
-                                 'device' : 'String'},
-                    'lists'   : {'quartus_options' : 'String'}}
-
-    argtypes = ['vlogdefine', 'vlogparam']
+    argtypes = ['vlogdefine', 'vlogparam', 'generic']
 
     # Define Standard edition to be our default version
     isPro = False
     makefile_template = {False : "quartus-std-makefile.j2",
                          True  : "quartus-pro-makefile.j2"}
+    dse_template = 'quartus-dse.j2'
 
+    @classmethod
+    def get_doc(cls, api_ver):
+        if api_ver == 0:
+            return {'description' : "The Quartus backend supports Intel Quartus Std and Pro editions to build systems and program the FPGA",
+                    'members' : [
+                        {'name' : 'family',
+                         'type' : 'String',
+                         'desc' : 'FPGA family (e.g. Cyclone V)'},
+                        {'name' : 'device',
+                         'type' : 'String',
+                         'desc' : 'FPGA device (e.g. 5CSXFC6D6F31C8ES)'},
+                        {'name' : 'cable',
+                         'type' : 'String',
+                         'desc' : "Specifies the FPGA's JTAG programming cable. Use the tool `jtagconfig` to determine the available cables."},
+                        {'name' : 'board_device_index',
+                         'type' : 'String',
+                         'desc' : "Specifies the FPGA's device number in the JTAG chain. The device index specifies the device where the flash programmer looks for the Nios® II JTAG debug module. JTAG devices are numbered relative to the JTAG chain, starting at 1. Use the tool `jtagconfig` to determine the index."},
+                        {'name' : 'pnr',
+                         'type' : 'String',
+                         'desc' : 'P&R tool. Allowed values are quartus (default), dse (to perform a DSE based seed sweep) and none (to just run synthesis)'},
+                        {'name' : 'explore',
+                         'type' : 'String',
+                         'desc' : 'DSE exploration type, defaults to "seed" for a seed sweep'},
+                        {'name' : 'launcher',
+                         'type' : 'String',
+                         'desc' : 'DSE launcher, defaults to "local" for local building'},
+                        {'name' : 'processors',
+                         'type' : 'String',
+                         'desc' : 'The maximum number of parallel processors to use for DSE jobs, defaults to 0 for unlimited'},
+                        {'name' : 'timeout',
+                         'type' : 'String',
+                         'desc' : 'Time limit for DSE runs, defaults to "24h0m" for one day'},
+                        {'name' : 'stop_on_success',
+                         'type' : 'String',
+                         'desc' : 'True (default) to stop after the first DSE result has met all timing requirements, False to always build all seeds'},
+                        {'name' : 'parallelism',
+                         'type' : 'String',
+                         'desc' : 'Maximum number of P&R jobs DSE may run at once, default is 4'},
+                        {'name' : 'seeds',
+                         'type' : 'String',
+                         'desc' : 'Comma seperated list of seeds for DSE to try, default is "1,2,3,4"'},
+                        {'name' : 'quality_of_fit',
+                         'type' : 'String',
+                         'desc' : 'Path to a Python file containing the algorithm that determines the quality of fit score'}],
+                    'lists' : [
+                        {'name' : 'quartus_options',
+                         'type' : 'String',
+                         'desc' : 'Additional options for Quartus'},
+                        ]}
     """ Initial setup of the class
 
     This calls the parent constructor, but also identifies whether
     the current system is using a Standard or Pro edition of Quartus.
     """
-    def __init__(self, eda_api, work_root=None):
-        super(Quartus, self).__init__(eda_api, work_root)
+    def __init__(self, edam=None, work_root=None, eda_api=None):
+        if not edam:
+            edam = eda_api
+
+        super(Quartus, self).__init__(edam, work_root)
 
         # Acquire quartus_sh identification information from available tool if
-        # possible. We always default to Standard if a problem is encountered
-        selected = "Standard"
+        # possible. We always default to version 18.1 Standard if a problem is encountered
+        version = {
+            'major':   '18',
+            'minor':   '1',
+            'patch':   '0',
+            'date':    '01/01/2019',
+            'edition': 'Standard'
+        }
         try:
             qsh_text = subprocess.Popen(["quartus_sh", "--version"], stdout=subprocess.PIPE, env=os.environ).communicate()[0]
 
             # Attempt to pattern match the output. Examples include
             # Version 16.1.2 Build 203 01/18/2017 SJ Standard Edition
             # Version 17.1.2 Build 304 01/31/2018 SJ Pro Edition
-            match = re.search("Version \d+\.\d+\.\d+ Build \d+ \d{2}/\d{2}/\d{4} SJ (Standard|Pro) Edition", str(qsh_text))
+            version_exp = r'Version (?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+) ' + \
+                          r'Build (?P<build>\d+) (?P<date>\d{2}/\d{2}/\d{4}) (?:\w+) '    + \
+                          r'(?P<edition>(Lite|Standard|Pro)) Edition'
+
+            match = re.search(version_exp, str(qsh_text))
             if match != None:
-                selected = match.group(1)
+                version = match.groupdict()
         except:
             # It is possible for this to have been run on a box without
             # Quartus being installed. Allow these errors to be ignored
             logger.warning("Unable to recognise Quartus version via quartus_sh")
 
-        self.isPro = (selected == "Pro")
+        self.isPro = (version['edition'] == "Pro")
+
+        # Quartus Pro 17 and later use 1/0 for boolean generics. Other editions
+        # and versions use "true"/"false" strings
+        if (version['edition'] != "Pro") or (int(version['major']) < 17):
+            self.jinja_env.filters['generic_value_str'] = \
+                partial(self.jinja_env.filters['generic_value_str'], bool_is_str=True)
 
     """ Configuration is the first phase of the build
 
@@ -70,6 +129,15 @@ class Quartus(Edatool):
         has_vhdl2008 = 'vhdlSource-2008' in [x.file_type for x in src_files]
         has_qsys     = 'QSYS'            in [x.file_type for x in src_files]
 
+        # Set defaults
+        if not 'seeds' in self.tool_options: self.tool_options['seeds'] = '1,2,3,4'
+        if not 'parallelism' in self.tool_options: self.tool_options['parallelism'] = '4'
+        if not 'stop_on_success' in self.tool_options: self.tool_options['stop_on_success'] = 'True'
+        if not 'explore' in self.tool_options: self.tool_options['explore'] = 'seed'
+        if not 'launcher' in self.tool_options: self.tool_options['launcher'] = 'local'
+        if not 'processors' in self.tool_options: self.tool_options['processors'] = '0'
+        if not 'timeout' in self.tool_options: self.tool_options['timeout'] = '24h0m'
+
         escaped_name = self.name.replace(".", "_")
 
         template_vars = {
@@ -80,6 +148,7 @@ class Quartus(Edatool):
             'toplevel'     : self.toplevel,
             'vlogparam'    : self.vlogparam,
             'vlogdefine'   : self.vlogdefine,
+            'generic'      : self.generic,
             'has_vhdl2008' : has_vhdl2008
         }
 
@@ -89,6 +158,11 @@ class Quartus(Edatool):
                              { 'name'         : escaped_name,
                                'src_files'    : src_files,
                                'tool_options' : self.tool_options})
+
+        # Render DSE settings: file
+        self.render_template(self.dse_template,
+                             escaped_name + '.dse',
+                             { 'tool_options' : self.tool_options })
 
         # Render the TCL project file
         self.render_template('quartus-project.tcl.j2',
@@ -115,7 +189,7 @@ class Quartus(Edatool):
                 except (AttributeError, KeyError):
                     # Either a component wasn't found in the QSYS file, or it
                     # had no associated tool information. Make the assumption
-                    # it was a Standard edition file 
+                    # it was a Standard edition file
                     if not self.isPro:
                         name = f.name
             except (ET.ParseError, IOError):
@@ -181,11 +255,37 @@ class Quartus(Edatool):
 
         return ''
 
+
+    def build_main(self):
+        logger.info("Building")
+        args = []
+        if 'pnr' in self.tool_options:
+            if self.tool_options['pnr'] == 'quartus':
+                pass
+            elif self.tool_options['pnr'] == 'dse':
+                args.append('dse')
+            elif self.tool_options['pnr'] == 'none':
+                args.append('syn')
+        self._run_tool('make', args)
+
     """ Program the FPGA
     """
-    def run(self, remaining):
+    def run_main(self):
         args = ['--mode=jtag']
-        args += remaining
+        if 'cable' in self.tool_options:
+            args += ['-c', self.tool_options['cable']]
         args += ['-o']
         args += ['p;' + self.name.replace('.', '_') + '.sof']
+
+        if 'pnr' in self.tool_options:
+            if self.tool_options['pnr'] == 'quartus':
+                pass
+            elif self.tool_options['pnr'] == 'dse':
+                return
+            elif self.tool_options['pnr'] == 'none':
+                return
+
+        if 'board_device_index' in self.tool_options:
+            args[-1] += "@" + self.tool_options['board_device_index']
+
         self._run_tool('quartus_pgm', args)

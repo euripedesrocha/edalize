@@ -14,11 +14,11 @@ def test_icestorm():
         'arachne_pnr_options' : ['a', 'few', 'arachne_pnr_options'],
     }
 
-    (backend, args, work_root) = setup_backend(paramtypes, name, tool, tool_options)
-    backend.configure(args)
+    (backend, work_root) = setup_backend(paramtypes, name, tool, tool_options)
+    backend.configure()
 
     compare_files(ref_dir, work_root, ['Makefile',
-                                       name+'.ys'])
+                                       name+'.tcl'])
 
     f = os.path.join(work_root, 'pcf_file.pcf')
     with open(f, 'a'):
@@ -39,10 +39,10 @@ def test_icestorm_minimal():
     tool         = 'icestorm'
 
     (backend, work_root) = setup_backend_minimal(name, tool, [{'name' : 'pcf_file.pcf', 'file_type' : 'PCF'}])
-    backend.configure('')
+    backend.configure()
 
     compare_files(ref_dir, work_root, ['Makefile',
-                                       name+'.ys'])
+                                       name+'.tcl'])
 
     f = os.path.join(work_root, 'pcf_file.pcf')
     with open(f, 'a'):
@@ -62,9 +62,8 @@ def test_icestorm_no_pcf():
     tool         = 'icestorm'
 
     (backend, work_root) = setup_backend_minimal(name, tool, [])
-    with pytest.raises(RuntimeError) as e:
-        backend.configure('')
-    assert "Icestorm backend requires a PCF file" in str(e.value)
+    backend.configure()
+    assert os.path.exists(os.path.join(work_root, 'empty.pcf'))
 
 def test_icestorm_multiple_pcf():
     import os
@@ -77,7 +76,7 @@ def test_icestorm_multiple_pcf():
     (backend, work_root) = setup_backend_minimal(name, tool, [{'name' : 'pcf_file.pcf', 'file_type' : 'PCF'},
                                                               {'name' : 'pcf_file2.pcf', 'file_type' : 'PCF'}])
     with pytest.raises(RuntimeError) as e:
-        backend.configure('')
+        backend.configure()
     assert "Icestorm backend supports only one PCF file. Found pcf_file.pcf, pcf_file2.pcf" in str(e.value)
 
 def test_icestorm_nextpnr():
@@ -96,11 +95,11 @@ def test_icestorm_nextpnr():
         'pnr'                 : 'next',
     }
 
-    (backend, args, work_root) = setup_backend(paramtypes, name, tool, tool_options)
-    backend.configure(args)
+    (backend, work_root) = setup_backend(paramtypes, name, tool, tool_options)
+    backend.configure()
 
     compare_files(ref_dir, work_root, ['Makefile',
-                                       name+'.ys'])
+                                       name+'.tcl'])
 
     f = os.path.join(work_root, 'pcf_file.pcf')
     with open(f, 'a'):
@@ -124,7 +123,7 @@ def test_icestorm_invalid_pnr():
         'pnr'                 : 'invalid',
     }
 
-    (backend, args, work_root) = setup_backend(paramtypes, name, tool, tool_options)
+    (backend, work_root) = setup_backend(paramtypes, name, tool, tool_options)
     with pytest.raises(RuntimeError) as e:
-        backend.configure(args)
+        backend.configure()
     assert "nvalid pnr option 'invalid'. Valid values are 'arachne' for Arachne-pnr or 'next' for nextpnr" in str(e.value)
